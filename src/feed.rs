@@ -3,6 +3,7 @@ use bytes::Bytes;
 pub type Error = reqwest::Error;
 pub type Result<TOk> = std::result::Result<TOk, Error>;
 
+#[derive(Clone)]
 pub struct Feed {
     domain: String,
     user_name: String,

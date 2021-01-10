@@ -1,9 +1,11 @@
-use std::{fmt, fs, io};
-use std::fs::File;
+use std::{fmt, io};
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{self, AtomicU64};
 
 use bytes::{Buf, Bytes};
-use chrono::prelude::*;
+use chrono::{DateTime, Local};
+use futures::{stream, StreamExt};
 use num_format::{Locale, ToFormattedString};
 
 use feed::*;
@@ -14,17 +16,18 @@ const REDDIT_DOMAIN: &str = "old.reddit.com";
 const USER_NAME: &str = "<your-username-here>";
 const FEED_TOKEN: &str = "<your-feed-token-here>";
 
+const MAX_PARALLEL_DOWNLOADS: usize = 32;
 const LOC: &Locale = &Locale::en_GB;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    download_feeds_to_file(&std::env::current_dir()?, REDDIT_DOMAIN, USER_NAME, FEED_TOKEN)
+    download_feeds(&std::env::current_dir()?, REDDIT_DOMAIN, USER_NAME, FEED_TOKEN)
         .await?;
     Ok(())
 }
 
-async fn download_feeds_to_file(dir_path: &Path, domain: &str, user_name: &str, token: &str) -> Result<u64> {
-    let listings = [
+async fn download_feeds(dir_path: &Path, domain: &str, user_name: &str, token: &str) -> Result<u64> {
+    static LISTINGS: &[Listing] = &[
         Listing::FrontPage,
         Listing::Saved,
         Listing::UpVoted,
@@ -37,25 +40,49 @@ async fn download_feeds_to_file(dir_path: &Path, domain: &str, user_name: &str, 
         Listing::InboxSelfPostReplies,
         Listing::InboxMentions,
     ];
-    let formats = [
+    static FORMATS: &[FeedFormat] = &[
         FeedFormat::Json,
         FeedFormat::Rss,
     ];
 
     let now = Local::now();
-
-    let mut total_bytes = 0;
-    for listing in &listings {
-        let feed = Feed::new(domain.to_string(), user_name.to_string(), token.to_string(), *listing);
-
-        for format in &formats {
-            let (num_bytes, out_path) = download_feed(&feed, format, &dir_path, &now).await?;
-            println!("Downloaded {} bytes to {}", num_bytes.to_formatted_string(LOC), out_path.to_string_lossy());
-            total_bytes += num_bytes;
+    let feeds: Vec<(Feed, FeedFormat)> = {
+        let mut out = Vec::with_capacity(LISTINGS.len() * FORMATS.len());
+        for listing in LISTINGS {
+            let feed = Feed::new(domain.to_string(), user_name.to_string(), token.to_string(), *listing);
+            for format in FORMATS {
+                out.push((feed.clone(), *format));
+            }
         }
-    }
+        out
+    };
 
-    println!("Downloaded total of {} bytes", total_bytes.to_formatted_string(LOC));
+    let results = stream::iter(feeds)
+        .map(|(feed, format)| async move {
+            download_feed(&feed, &format, &dir_path, &now).await
+        })
+        .buffer_unordered(MAX_PARALLEL_DOWNLOADS);
+
+    let mut total_bytes = AtomicU64::new(0);
+    results
+        .for_each(|result| {
+            let total_bytes = &total_bytes;
+            async move {
+                match result {
+                    Ok((num_bytes, path)) => {
+                        println!("Downloaded {} bytes to {}", num_bytes.to_formatted_string(LOC), path.to_string_lossy());
+                        total_bytes.fetch_add(num_bytes, atomic::Ordering::Relaxed);
+                    }
+                    Err(err) => {
+                        eprintln!("Failure! {}", err);
+                    }
+                }
+            }
+        })
+        .await;
+
+    let total_bytes = *total_bytes.get_mut();
+    println!("Downloaded {} bytes", total_bytes.to_formatted_string(LOC));
     Ok(total_bytes)
 }
 
