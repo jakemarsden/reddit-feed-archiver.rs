@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicBool, AtomicU64};
@@ -8,66 +9,67 @@ use chrono::{DateTime, Local};
 use futures::{stream, StreamExt};
 use num_format::{Locale, ToFormattedString};
 
-use feed::*;
+use crate::config::*;
+use crate::feed::*;
 
+mod config;
 mod feed;
 
-const REDDIT_DOMAIN: &str = "old.reddit.com";
-const USER_NAME: &str = "<your-username-here>";
-const FEED_TOKEN: &str = "<your-feed-token-here>";
-
-const MAX_PARALLEL_DOWNLOADS: usize = 32;
 const LOC: &Locale = &Locale::en_GB;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), ()> {
-    let curr_dir = &std::env::current_dir()
-        .map_err(|err| eprintln!("Failed to get current directory: {}", err))?;
-    download_feeds(curr_dir, REDDIT_DOMAIN, USER_NAME, FEED_TOKEN).await?;
-    Ok(())
-}
-
-async fn download_feeds(
-    dir_path: &Path,
-    domain: &str,
-    user_name: &str,
-    token: &str,
-) -> Result<(), ()> {
-    static LISTINGS: &[Listing] = &[
-        Listing::FrontPage,
-        Listing::Saved,
-        Listing::UpVoted,
-        Listing::DownVoted,
-        Listing::Hidden,
-        Listing::InboxAll,
-        Listing::InboxUnread,
-        Listing::InboxMessages,
-        Listing::InboxCommentReplies,
-        Listing::InboxSelfPostReplies,
-        Listing::InboxMentions,
-    ];
-    static FORMATS: &[FeedFormat] = &[FeedFormat::Json, FeedFormat::Rss];
-
     let now = Local::now();
-    let feeds: Vec<Feed> = {
-        let mut out = Vec::with_capacity(LISTINGS.len() * FORMATS.len());
-        for listing in LISTINGS {
-            for format in FORMATS {
-                out.push(Feed::new(
-                    domain.to_string(),
-                    user_name.to_string(),
-                    token.to_string(),
+    let config = AppConfig {
+        reddit_domain: None,
+        max_concurrent_downloads: None,
+        out_path: Some(OsString::from("../reddit-feed-archive")),
+        feeds: vec![
+            FeedConfig {
+                user_name: "<your-username-here>".to_string(),
+                feed_token: "<your-feed-token-here>".to_string(),
+                listings: Subset::All,
+                formats: Subset::Some(vec![FeedFormat::Json]),
+            },
+            // ...feed configs for other accounts
+        ],
+    };
+
+    let mut feeds = Vec::new();
+    for feed_config in &config.feeds {
+        for listing in &feed_config.listings.to_vec() {
+            for format in &feed_config.formats.to_vec() {
+                feeds.push(Feed::new(
+                    feed_config.user_name.to_string(),
+                    feed_config.feed_token.to_string(),
                     *listing,
                     *format,
                 ));
             }
         }
-        out
-    };
+    }
 
+    download_feeds(
+        &now,
+        config.reddit_domain(),
+        config.max_concurrent_downloads(),
+        config.out_path(),
+        &feeds,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn download_feeds(
+    now: &DateTime<Local>,
+    domain: &str,
+    max_parallel_downloads: u16,
+    out_dir: &Path,
+    feeds: &[Feed],
+) -> Result<(), ()> {
     let results = stream::iter(feeds)
-        .map(|feed| async move { download_feed(&feed, &dir_path, &now).await })
-        .buffer_unordered(MAX_PARALLEL_DOWNLOADS);
+        .map(|feed| async move { download_feed(now, domain, feed, out_dir).await })
+        .buffer_unordered(max_parallel_downloads as usize);
 
     let total_bytes = AtomicU64::new(0);
     let succeeded = AtomicBool::new(true);
@@ -105,13 +107,14 @@ async fn download_feeds(
 }
 
 async fn download_feed(
-    feed: &Feed,
-    dir_path: &Path,
     now: &DateTime<Local>,
+    domain: &str,
+    feed: &Feed,
+    out_dir: &Path,
 ) -> Result<(u64, PathBuf), Error> {
-    let file_path = dir_path.join(feed.file_name(now));
+    let file_path = out_dir.join(feed.sub_path(now));
 
-    let content = feed.download().await?;
+    let content = feed.download(domain).await?;
     let num_bytes = write_bytes_to_file(&file_path, content)?;
 
     Ok((num_bytes, file_path))

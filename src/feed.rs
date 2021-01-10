@@ -1,11 +1,13 @@
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use bytes::Bytes;
 use chrono::{DateTime, Local};
 
+use crate::config::AllValues;
+
 #[derive(Clone)]
 pub struct Feed {
-    domain: String,
     user_name: String,
     token: String,
     listing: Listing,
@@ -16,6 +18,13 @@ pub struct Feed {
 pub enum FeedFormat {
     Json,
     Rss,
+}
+
+impl AllValues for FeedFormat {
+    fn all() -> &'static [Self] {
+        static ALL: &[FeedFormat] = &[FeedFormat::Json, FeedFormat::Rss];
+        ALL
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -35,16 +44,28 @@ pub enum Listing {
     InboxMentions,
 }
 
+impl AllValues for Listing {
+    fn all() -> &'static [Self] {
+        static ALL: &[Listing] = &[
+            Listing::FrontPage,
+            Listing::Saved,
+            Listing::UpVoted,
+            Listing::DownVoted,
+            Listing::Hidden,
+            Listing::InboxAll,
+            Listing::InboxUnread,
+            Listing::InboxMessages,
+            Listing::InboxCommentReplies,
+            Listing::InboxSelfPostReplies,
+            Listing::InboxMentions,
+        ];
+        ALL
+    }
+}
+
 impl Feed {
-    pub fn new(
-        domain: String,
-        user_name: String,
-        token: String,
-        listing: Listing,
-        format: FeedFormat,
-    ) -> Self {
+    pub fn new(user_name: String, token: String, listing: Listing, format: FeedFormat) -> Self {
         Self {
-            domain,
             user_name,
             token,
             listing,
@@ -52,14 +73,14 @@ impl Feed {
         }
     }
 
-    pub async fn download(&self) -> reqwest::Result<Bytes> {
-        let req_url = self.url();
+    pub async fn download(&self, domain: &str) -> reqwest::Result<Bytes> {
+        let req_url = self.url(domain);
         let res = reqwest::get(&req_url).await?.error_for_status()?;
         let res_body = res.bytes().await?;
         Ok(res_body)
     }
 
-    pub fn url(&self) -> String {
+    pub fn url(&self, domain: &str) -> String {
         let url_path: String = match &self.listing {
             Listing::FrontPage => "/".to_string(),
             Listing::Saved => "/saved".to_string(),
@@ -78,19 +99,21 @@ impl Feed {
         let ext = self.format.extension();
         format!(
             "https://{}{}.{}?feed={}&user={}",
-            self.domain, url_path, ext, self.token, self.user_name
+            domain, url_path, ext, self.token, self.user_name
         )
     }
 
-    pub fn file_name(&self, timestamp: &DateTime<Local>) -> OsString {
-        let timestamp_str = timestamp.format("%Y-%m-%d_%H-%M-%S%z");
-        let ext = self.format.extension();
+    pub fn sub_path(&self, timestamp: &DateTime<Local>) -> PathBuf {
+        PathBuf::from(&self.user_name)
+            .join(timestamp.format("%Y-%m-%d_%H-%M-%S%z").to_string())
+            .join(self.file_name())
+    }
+
+    pub fn file_name(&self) -> OsString {
         OsString::from(format!(
-            "{}.{}.{}.{}",
-            self.user_name,
+            "{}.{}",
             self.listing.file_name_part(),
-            timestamp_str,
-            ext
+            self.format.extension()
         ))
     }
 }
