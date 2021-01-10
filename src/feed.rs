@@ -14,7 +14,7 @@ pub struct Feed {
     format: FeedFormat,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FeedFormat {
     Json,
     Rss,
@@ -27,16 +27,16 @@ impl AllValues for FeedFormat {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Listing {
     FrontPage,
     Saved,
 
-    UpVoted,
-    DownVoted,
+    Upvoted,
+    Downvoted,
     Hidden,
 
-    InboxAll,
+    Inbox,
     InboxUnread,
     InboxMessages,
     InboxCommentReplies,
@@ -49,10 +49,10 @@ impl AllValues for Listing {
         static ALL: &[Listing] = &[
             Listing::FrontPage,
             Listing::Saved,
-            Listing::UpVoted,
-            Listing::DownVoted,
+            Listing::Upvoted,
+            Listing::Downvoted,
             Listing::Hidden,
-            Listing::InboxAll,
+            Listing::Inbox,
             Listing::InboxUnread,
             Listing::InboxMessages,
             Listing::InboxCommentReplies,
@@ -85,11 +85,11 @@ impl Feed {
             Listing::FrontPage => "/".to_string(),
             Listing::Saved => "/saved".to_string(),
 
-            Listing::UpVoted => format!("/user/{}/upvoted", self.user_name),
-            Listing::DownVoted => format!("/user/{}/downvoted", self.user_name),
+            Listing::Upvoted => format!("/user/{}/upvoted", self.user_name),
+            Listing::Downvoted => format!("/user/{}/downvoted", self.user_name),
             Listing::Hidden => format!("/user/{}/hidden", self.user_name),
 
-            Listing::InboxAll => "/message/inbox/".to_string(),
+            Listing::Inbox => "/message/inbox/".to_string(),
             Listing::InboxUnread => "/message/unread/".to_string(),
             Listing::InboxMessages => "/message/messages/".to_string(),
             Listing::InboxCommentReplies => "/message/comments/".to_string(),
@@ -130,19 +130,19 @@ impl FeedFormat {
 impl Listing {
     fn file_name_part(&self) -> &str {
         match self {
-            Self::FrontPage => "frontpage",
+            Self::FrontPage => "frontPage",
             Self::Saved => "saved",
 
-            Self::UpVoted => "upvoted",
-            Self::DownVoted => "downvoted",
+            Self::Upvoted => "upvoted",
+            Self::Downvoted => "downvoted",
             Self::Hidden => "hidden",
 
-            Self::InboxAll => "inbox",
-            Self::InboxUnread => "inbox_unread",
-            Self::InboxMessages => "inbox_messages",
-            Self::InboxCommentReplies => "inbox_commentReplies",
-            Self::InboxSelfPostReplies => "inbox_selfPostReplies",
-            Self::InboxMentions => "inbox_mentions",
+            Self::Inbox => "inbox",
+            Self::InboxUnread => "inboxUnread",
+            Self::InboxMessages => "inboxMessages",
+            Self::InboxCommentReplies => "inboxCommentReplies",
+            Self::InboxSelfPostReplies => "inboxSelfPostReplies",
+            Self::InboxMentions => "inboxMentions",
         }
     }
 }

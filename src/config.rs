@@ -26,6 +26,7 @@ pub struct FeedConfig {
 #[derive(Clone)]
 pub enum Subset<T> {
     All,
+    AllExcept(Vec<T>),
     Some(Vec<T>),
 }
 
@@ -58,11 +59,16 @@ impl AppConfig {
     }
 }
 
-impl<T: 'static + AllValues + Clone> Subset<T> {
+impl<T: 'static + AllValues + PartialEq + Clone> Subset<T> {
     pub fn to_vec(&self) -> Vec<T> {
         match self {
             Self::All => T::all().to_vec(),
-            Self::Some(them) => them.clone(),
+            Self::AllExcept(exclusions) => {
+                let mut elems = T::all().to_vec();
+                elems.retain(|e| !exclusions.contains(e));
+                elems
+            }
+            Self::Some(inclusions) => inclusions.clone(),
         }
     }
 }

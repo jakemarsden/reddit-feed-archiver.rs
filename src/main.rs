@@ -15,7 +15,7 @@ use crate::feed::*;
 mod config;
 mod feed;
 
-const LOC: &Locale = &Locale::en_GB;
+const LOCALE: Locale = Locale::en_GB;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), ()> {
@@ -23,13 +23,13 @@ async fn main() -> Result<(), ()> {
     let config = AppConfig {
         reddit_domain: None,
         max_concurrent_downloads: None,
-        out_path: Some(OsString::from("../reddit-feed-archive")),
+        out_path: Some(OsString::from("reddit-feed-archive")),
         feeds: vec![
             FeedConfig {
                 user_name: "<your-username-here>".to_string(),
                 feed_token: "<your-feed-token-here>".to_string(),
                 listings: Subset::All,
-                formats: Subset::Some(vec![FeedFormat::Json]),
+                formats: Subset::AllExcept(vec![FeedFormat::Rss]),
             },
             // ...feed configs for other accounts
         ],
@@ -37,8 +37,10 @@ async fn main() -> Result<(), ()> {
 
     let mut feeds = Vec::new();
     for feed_config in &config.feeds {
-        for listing in &feed_config.listings.to_vec() {
-            for format in &feed_config.formats.to_vec() {
+        let listings = &feed_config.listings.to_vec();
+        let formats = &feed_config.formats.to_vec();
+        for listing in listings {
+            for format in formats {
                 feeds.push(Feed::new(
                     feed_config.user_name.to_string(),
                     feed_config.feed_token.to_string(),
@@ -82,7 +84,7 @@ async fn download_feeds(
                     Ok((num_bytes, path)) => {
                         println!(
                             "Downloaded {} bytes to {}",
-                            num_bytes.to_formatted_string(LOC),
+                            num_bytes.to_formatted_string(&LOCALE),
                             path.to_string_lossy()
                         );
                         total_bytes.fetch_add(num_bytes, atomic::Ordering::Relaxed);
@@ -97,7 +99,10 @@ async fn download_feeds(
         .await;
 
     let total_bytes = total_bytes.into_inner();
-    println!("Downloaded {} bytes", total_bytes.to_formatted_string(LOC));
+    println!(
+        "Downloaded {} bytes",
+        total_bytes.to_formatted_string(&LOCALE)
+    );
 
     if succeeded.into_inner() {
         Ok(())
