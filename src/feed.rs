@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use std::ffi::OsString;
 
-pub type Error = reqwest::Error;
-pub type Result<TOk> = std::result::Result<TOk, Error>;
+use bytes::Bytes;
+use chrono::{DateTime, Local};
 
 #[derive(Clone)]
 pub struct Feed {
@@ -9,6 +9,7 @@ pub struct Feed {
     user_name: String,
     token: String,
     listing: Listing,
+    format: FeedFormat,
 }
 
 #[derive(Copy, Clone)]
@@ -35,20 +36,12 @@ pub enum Listing {
 }
 
 impl Feed {
-    pub fn new(domain: String, user_name: String, token: String, listing: Listing) -> Self {
-        Self { domain, user_name, token, listing }
+    pub fn new(domain: String, user_name: String, token: String, listing: Listing, format: FeedFormat) -> Self {
+        Self { domain, user_name, token, listing, format }
     }
 
-    pub fn user_name(&self) -> &str {
-        &self.user_name
-    }
-
-    pub fn listing(&self) -> &Listing {
-        &self.listing
-    }
-
-    pub async fn download(&self, format: &FeedFormat) -> Result<Bytes> {
-        let req_url = self.url(format);
+    pub async fn download(&self) -> reqwest::Result<Bytes> {
+        let req_url = self.url();
         let res = reqwest::get(&req_url)
             .await?
             .error_for_status()?;
@@ -56,24 +49,31 @@ impl Feed {
         Ok(res_body)
     }
 
-    pub fn url(&self, format: &FeedFormat) -> String {
-        let ext = format.extension();
-        let url_path = match &self.listing {
-            Listing::FrontPage => format!("/.{}", ext),
-            Listing::Saved => format!("/saved.{}", ext),
+    pub fn url(&self) -> String {
+        let url_path: String = match &self.listing {
+            Listing::FrontPage => format!("/"),
+            Listing::Saved => format!("/saved"),
 
-            Listing::UpVoted => format!("/user/{}/upvoted.{}", self.user_name, ext),
-            Listing::DownVoted => format!("/user/{}/downvoted.{}", self.user_name, ext),
-            Listing::Hidden => format!("/user/{}/hidden.{}", self.user_name, ext),
+            Listing::UpVoted => format!("/user/{}/upvoted", self.user_name),
+            Listing::DownVoted => format!("/user/{}/downvoted", self.user_name),
+            Listing::Hidden => format!("/user/{}/hidden", self.user_name),
 
-            Listing::InboxAll => format!("/message/inbox/.{}", ext),
-            Listing::InboxUnread => format!("/message/unread/.{}", ext),
-            Listing::InboxMessages => format!("/message/messages/.{}", ext),
-            Listing::InboxCommentReplies => format!("/message/comments/.{}", ext),
-            Listing::InboxSelfPostReplies => format!("/message/selfreply.{}", ext),
-            Listing::InboxMentions => format!("/message/mentions.{}", ext),
+            Listing::InboxAll => format!("/message/inbox/"),
+            Listing::InboxUnread => format!("/message/unread/"),
+            Listing::InboxMessages => format!("/message/messages/"),
+            Listing::InboxCommentReplies => format!("/message/comments/"),
+            Listing::InboxSelfPostReplies => format!("/message/selfreply"),
+            Listing::InboxMentions => format!("/message/mentions"),
         };
-        format!("https://{}{}?feed={}&user={}", self.domain, url_path, self.token, self.user_name)
+        let ext = self.format.extension();
+        format!("https://{}{}.{}?feed={}&user={}", self.domain, url_path, ext, self.token, self.user_name)
+    }
+
+    pub fn file_name(&self, timestamp: &DateTime<Local>) -> OsString {
+        let timestamp_str = timestamp.format("%Y-%m-%d_%H-%M-%S%z");
+        let ext = self.format.extension();
+        OsString::from(
+            format!("{}.{}.{}.{}", self.user_name, self.listing.file_name_part(), timestamp_str, ext))
     }
 }
 
@@ -87,13 +87,15 @@ impl FeedFormat {
 }
 
 impl Listing {
-    pub fn name(&self) -> &str {
+    fn file_name_part(&self) -> &str {
         match self {
             Self::FrontPage => "frontpage",
             Self::Saved => "saved",
+
             Self::UpVoted => "upvoted",
             Self::DownVoted => "downvoted",
             Self::Hidden => "hidden",
+
             Self::InboxAll => "inbox",
             Self::InboxUnread => "inbox_unread",
             Self::InboxMessages => "inbox_messages",

@@ -1,7 +1,7 @@
 use std::{fmt, io};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{self, AtomicU64};
+use std::sync::atomic::{self, AtomicBool, AtomicU64};
 
 use bytes::{Buf, Bytes};
 use chrono::{DateTime, Local};
@@ -20,13 +20,14 @@ const MAX_PARALLEL_DOWNLOADS: usize = 32;
 const LOC: &Locale = &Locale::en_GB;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    download_feeds(&std::env::current_dir()?, REDDIT_DOMAIN, USER_NAME, FEED_TOKEN)
-        .await?;
+async fn main() -> Result<(), ()> {
+    let curr_dir = &std::env::current_dir()
+        .map_err(|err| eprintln!("Failed to get current directory: {}", err))?;
+    download_feeds(curr_dir, REDDIT_DOMAIN, USER_NAME, FEED_TOKEN).await?;
     Ok(())
 }
 
-async fn download_feeds(dir_path: &Path, domain: &str, user_name: &str, token: &str) -> Result<u64> {
+async fn download_feeds(dir_path: &Path, domain: &str, user_name: &str, token: &str) -> Result<(), ()> {
     static LISTINGS: &[Listing] = &[
         Listing::FrontPage,
         Listing::Saved,
@@ -46,27 +47,29 @@ async fn download_feeds(dir_path: &Path, domain: &str, user_name: &str, token: &
     ];
 
     let now = Local::now();
-    let feeds: Vec<(Feed, FeedFormat)> = {
+    let feeds: Vec<Feed> = {
         let mut out = Vec::with_capacity(LISTINGS.len() * FORMATS.len());
         for listing in LISTINGS {
-            let feed = Feed::new(domain.to_string(), user_name.to_string(), token.to_string(), *listing);
             for format in FORMATS {
-                out.push((feed.clone(), *format));
+                out.push(
+                    Feed::new(domain.to_string(), user_name.to_string(), token.to_string(), *listing, *format));
             }
         }
         out
     };
 
     let results = stream::iter(feeds)
-        .map(|(feed, format)| async move {
-            download_feed(&feed, &format, &dir_path, &now).await
+        .map(|feed| async move {
+            download_feed(&feed, &dir_path, &now).await
         })
         .buffer_unordered(MAX_PARALLEL_DOWNLOADS);
 
-    let mut total_bytes = AtomicU64::new(0);
+    let total_bytes = AtomicU64::new(0);
+    let succeeded = AtomicBool::new(true);
     results
         .for_each(|result| {
             let total_bytes = &total_bytes;
+            let succeeded = &succeeded;
             async move {
                 match result {
                     Ok((num_bytes, path)) => {
@@ -75,23 +78,24 @@ async fn download_feeds(dir_path: &Path, domain: &str, user_name: &str, token: &
                     }
                     Err(err) => {
                         eprintln!("Failure! {}", err);
+                        succeeded.store(false, atomic::Ordering::Relaxed);
                     }
                 }
             }
         })
         .await;
 
-    let total_bytes = *total_bytes.get_mut();
+    let total_bytes = total_bytes.into_inner();
+    let succeeded = succeeded.into_inner();
+
     println!("Downloaded {} bytes", total_bytes.to_formatted_string(LOC));
-    Ok(total_bytes)
+    if succeeded { Ok(()) } else { Err(()) }
 }
 
-async fn download_feed(feed: &Feed, format: &FeedFormat, dir_path: &Path, now: &DateTime<Local>) -> Result<(u64, PathBuf)> {
-    let timestamp = now.format("%Y-%m-%d_%H-%M-%S%z");
-    let file_name = format!("{}.{}.{}.{}", feed.user_name(), feed.listing().name(), timestamp, format.extension());
-    let file_path = dir_path.join(file_name);
+async fn download_feed(feed: &Feed, dir_path: &Path, now: &DateTime<Local>) -> Result<(u64, PathBuf), Error> {
+    let file_path = dir_path.join(feed.file_name(now));
 
-    let content = feed.download(format).await?;
+    let content = feed.download().await?;
     let num_bytes = write_bytes_to_file(&file_path, content)?;
 
     Ok((num_bytes, file_path))
@@ -107,8 +111,6 @@ fn write_bytes_to_file(path: &Path, content: Bytes) -> io::Result<u64> {
         Err(io::Error::from(io::ErrorKind::PermissionDenied))
     }
 }
-
-type Result<TOk> = std::result::Result<TOk, Error>;
 
 #[derive(Debug)]
 enum Error {
