@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="check" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
-    <option name="command" value="clippy --all-targets --all-features" />
+  <configuration default="false" name="format" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="command" value="fmt --all" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <option name="channel" value="DEFAULT" />
     <option name="allFeatures" value="false" />
